@@ -6,7 +6,8 @@ import theano
 from theano.tensor.type import TensorType
 from blocks.algorithms import GradientDescent, Adam
 from blocks.extensions import FinishAfter, Printing
-from blocks.extensions.monitoring import TrainingDataMonitoring
+from blocks.extensions.monitoring import (TrainingDataMonitoring,
+                                          DataStreamMonitoring)
 from blocks.filter import VariableFilter
 from blocks.graph import ComputationGraph
 from blocks.main_loop import MainLoop
@@ -30,7 +31,8 @@ def setup_model():
     return ladder
 
 
-def train(ladder, batch_size=110, labeled_samples=100, unlabeled_samples=60000,
+def train(ladder, batch_size=100, labeled_samples=100,
+          unlabeled_samples=50000, valid_set_size=10000,
           num_epochs=150, valid_batch_size=100, lrate_decay=0.67,
           save_path='results/mnist_100_full0'):
     # Setting Logger
@@ -53,37 +55,48 @@ def train(ladder, batch_size=110, labeled_samples=100, unlabeled_samples=60000,
     bn_updates = ComputationGraph([ladder.costs.class_clean]).updates
     training_algorithm.add_updates(bn_updates)
 
-    # monitorings = DataStreamMonitoring(
-    #     [cost, error_rate],
-    #     data_stream=valid_stream,
-    #     prefix="train",
-    #     after_epoch=True)
+    monitored_variables = [
+        ladder.costs.class_corr, ladder.costs.class_clean,
+        ladder.error.clean, training_algorithm.total_gradient_norm,
+        ladder.costs.total] + ladder.costs.denois.values()
+
+    data = get_mnist_data_dict(unlabeled_samples=unlabeled_samples,
+                               valid_set_size=valid_set_size)
+
+    train_data_stream = make_datastream(
+        data.train, data.train_ind, batch_size,
+        n_labeled=labeled_samples,
+        n_unlabeled=unlabeled_samples)
+
+    valid_data_stream = make_datastream(
+        data.valid, data.valid_ind, valid_batch_size,
+        n_labeled=len(data.valid_ind),
+        n_unlabeled=len(data.valid_ind))
 
     train_monitoring = TrainingDataMonitoring(
-        [ladder.costs.class_corr, ladder.costs.class_clean,
-         ladder.error.clean, training_algorithm.total_gradient_norm,
-         ladder.costs.total] + ladder.costs.denois.values(),
+        variables=monitored_variables,
         prefix="train",
         after_epoch=True)
 
-    data = get_mnist_data_dict()
+    valid_monitoring = DataStreamMonitoring(
+        variables=monitored_variables,
+        data_stream=valid_data_stream,
+        prefix="valid",
+        after_epoch=True)
 
     main_loop = MainLoop(
-        training_algorithm,
-        make_datastream(data.train, data.train_ind,
-                        batch_size,
-                        n_labeled=labeled_samples,
-                        n_unlabeled=unlabeled_samples),
+        algorithm=training_algorithm,
+        data_stream=train_data_stream,
         model=Model(ladder.costs.total),
         extensions=[
             train_monitoring,
+            valid_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
             SaveParams(None, all_params, save_path, after_epoch=True),
-            # Experiment params
             SaveLog(save_path, after_training=True),
-            LRDecay(ladder.lr,
-                    num_epochs * lrate_decay,
-                    num_epochs,
+            LRDecay(lr=ladder.lr,
+                    decay_first=num_epochs * lrate_decay,
+                    decay_last=num_epochs,
                     after_epoch=True),
             Printing()])
     main_loop.run()

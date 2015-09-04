@@ -99,8 +99,7 @@ class CombinedDataStream(Transformer):
         return dict(list(x.items()) + list(y.items()))
 
 
-def get_mnist_data_dict(unlabeled_samples=60000, valid_set_size=10000,
-                        test_set=False):
+def get_mnist_data_dict(unlabeled_samples, valid_set_size, test_set=False):
     train_set = MNIST(("train",))
     # Make sure the MNIST data is in right format
     train_set.data_sources = (
@@ -122,7 +121,6 @@ def get_mnist_data_dict(unlabeled_samples=60000, valid_set_size=10000,
     data.valid = train_set
     data.valid_ind = numpy.setdiff1d(all_ind, data.train_ind)[:valid_set_size]
     logger.info('Using %d examples for validation' % len(data.valid_ind))
-
     # Only touch test data if requested
     if test_set:
         data.test = MNIST(("test",))

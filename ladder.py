@@ -20,7 +20,7 @@ floatX = theano.config.floatX
 
 class LadderAE():
     def __init__(self):
-        self.input_dim = (1, 28, 28)
+        self.input_dim = 784
         self.denoising_cost_x = (1000.0, 10.0, 0.1, 0.1, 0.1, 0.1, 0.1)
         self.super_noise_std = 0.3
         self.f_local_noise_std = (0.3,) * 7
@@ -89,7 +89,7 @@ class LadderAE():
 
         input_concat = self.join(input_labeled, input_unlabeled)
 
-        def encoder(input_, path_name, input_noise_std=0, noise_std=[]):
+        def encoder(input_, path_name, input_noise_std, noise_std):
             h = input_
 
             logger.info('  0: noise %g' % input_noise_std)
@@ -99,8 +99,7 @@ class LadderAE():
             d = AttributeDict()
             d.unlabeled = self.new_activation_dict()
             d.labeled = self.new_activation_dict()
-            d.labeled.z[0] = self.labeled(h)
-            d.unlabeled.z[0] = self.unlabeled(h)
+            d.labeled.z[0], d.unlabeled.z[0] = self.split_lu(h)
             prev_dim = input_dim
             for i, (spec, act_f) in layers[1:]:
                 d.labeled.h[i - 1], d.unlabeled.h[i - 1] = self.split_lu(h)
@@ -108,7 +107,6 @@ class LadderAE():
                 curr_dim, z, m, s, h = self.f(h, prev_dim, spec, i, act_f,
                                               path_name=path_name,
                                               noise_std=noise)
-                assert self.layer_dims.get(i) in (None, curr_dim)
                 self.layer_dims[i] = curr_dim
                 d.labeled.z[i], d.unlabeled.z[i] = self.split_lu(z)
                 d.unlabeled.s[i] = s
@@ -117,19 +115,19 @@ class LadderAE():
             d.labeled.h[i], d.unlabeled.h[i] = self.split_lu(h)
             return d
 
-        # Clean, supervised
-        logger.info('Encoder: clean, labeled')
-        clean = self.act.clean = encoder(input_concat, 'clean')
+        clean = encoder(input_concat, 'clean',
+                        input_noise_std=0.0,
+                        noise_std=[])
+        corr = encoder(input_concat, 'corr',
+                       input_noise_std=self.super_noise_std,
+                       noise_std=self.f_local_noise_std)
+        self.act.clean = clean
+        self.act.corr = corr
 
-        # Corrupted, supervised
-        logger.info('Encoder: corr, labeled')
-        corr = self.act.corr = encoder(input_concat, 'corr',
-                                       input_noise_std=self.super_noise_std,
-                                       noise_std=self.f_local_noise_std)
-        est = self.act.est = self.new_activation_dict()
+        est = self.new_activation_dict()
+        self.act.est = est
 
-        # Decoder path in opposite order
-        logger.info('Decoder: z_corr -> z_est')
+        # Dcoder path
         for i, ((_, spec), act_f) in layers[::-1]:
             z_corr = corr.unlabeled.z[i]
             z_clean = clean.unlabeled.z[i]
