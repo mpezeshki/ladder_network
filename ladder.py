@@ -1,19 +1,16 @@
 import logging
-
 import numpy as np
 from collections import OrderedDict
-
 import theano
 import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
-
 from blocks.bricks.cost import SquaredError
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
 from blocks.graph import add_annotation, Annotation
 from blocks.roles import add_role, PARAMETER, WEIGHT, BIAS
-
-from utils import shared_param, AttributeDict, BNPARAM
-
+from utils import shared_param, AttributeDict, BNPARAM, apply_act
+from blocks.bricks import Linear
+from blocks.initialization import IsotropicGaussian
 logger = logging.getLogger('main.model')
 floatX = theano.config.floatX
 
@@ -57,88 +54,52 @@ class LadderAE():
                       (p_max, p_max_val)]
         return (p, update)
 
-    def rand_init(self, in_dim, out_dim):
-        return self.rng.randn(in_dim, out_dim) / np.sqrt(in_dim)
-
     def new_activation_dict(self):
         return AttributeDict({'z': {}, 'h': {}, 's': {}, 'm': {}})
 
-    def apply(self, input_labeled, target_labeled, input_unlabeled):
-        self.layer_counter = 0
-        input_dim = self.input_dim
+    def encoder(self, input_, path_name, input_noise_std, noise_std):
+        h = input_
+        h = h + (self.rstream.normal(size=h.shape).astype(floatX) *
+                 input_noise_std)
 
-        # Store the dimension tuples in the same order as layers.
-        layers = self.layers
-        self.layer_dims = {0: input_dim}
+        d = AttributeDict()
+        d.unlabeled = self.new_activation_dict()
+        d.labeled = self.new_activation_dict()
+        d.labeled.z[0], d.unlabeled.z[0] = self.split_lu(h)
+        prev_dim = self.input_dim
+        for i, (spec, act_f) in self.layers[1:]:
+            d.labeled.h[i - 1], d.unlabeled.h[i - 1] = self.split_lu(h)
+            noise = noise_std[i] if i < len(noise_std) else 0.
+            curr_dim, z, m, s, h = self.f(h, prev_dim, spec, i, act_f,
+                                          path_name=path_name,
+                                          noise_std=noise)
+            self.layer_dims[i] = curr_dim
+            d.labeled.z[i], d.unlabeled.z[i] = self.split_lu(z)
+            d.unlabeled.s[i] = s
+            d.unlabeled.m[i] = m
+            prev_dim = curr_dim
+        d.labeled.h[i], d.unlabeled.h[i] = self.split_lu(h)
 
-        self.lr = self.shared(self.default_lr, 'learning_rate', role=None)
+        return d
 
-        self.costs = costs = AttributeDict()
-        self.costs.denois = AttributeDict()
-
-        self.act = AttributeDict()
-        self.error = AttributeDict()
-
-        top = len(layers) - 1
-
-        N = input_labeled.shape[0]
-        self.join = lambda l, u: T.concatenate([l, u], axis=0)
-        self.labeled = lambda x: x[:N] if x is not None else x
-        self.unlabeled = lambda x: x[N:] if x is not None else x
-        self.split_lu = lambda x: (self.labeled(x), self.unlabeled(x))
-
-        input_concat = self.join(input_labeled, input_unlabeled)
-
-        def encoder(input_, path_name, input_noise_std, noise_std):
-            h = input_
-
-            logger.info('  0: noise %g' % input_noise_std)
-            h = h + (self.rstream.normal(size=h.shape).astype(floatX) *
-                     input_noise_std)
-
-            d = AttributeDict()
-            d.unlabeled = self.new_activation_dict()
-            d.labeled = self.new_activation_dict()
-            d.labeled.z[0], d.unlabeled.z[0] = self.split_lu(h)
-            prev_dim = input_dim
-            for i, (spec, act_f) in layers[1:]:
-                d.labeled.h[i - 1], d.unlabeled.h[i - 1] = self.split_lu(h)
-                noise = noise_std[i] if i < len(noise_std) else 0.
-                curr_dim, z, m, s, h = self.f(h, prev_dim, spec, i, act_f,
-                                              path_name=path_name,
-                                              noise_std=noise)
-                self.layer_dims[i] = curr_dim
-                d.labeled.z[i], d.unlabeled.z[i] = self.split_lu(z)
-                d.unlabeled.s[i] = s
-                d.unlabeled.m[i] = m
-                prev_dim = curr_dim
-            d.labeled.h[i], d.unlabeled.h[i] = self.split_lu(h)
-            return d
-
-        clean = encoder(input_concat, 'clean',
-                        input_noise_std=0.0,
-                        noise_std=[])
-        corr = encoder(input_concat, 'corr',
-                       input_noise_std=self.super_noise_std,
-                       noise_std=self.f_local_noise_std)
-        self.act.clean = clean
-        self.act.corr = corr
-
+    def decoder(self, clean, corr):
         est = self.new_activation_dict()
-        self.act.est = est
-
-        # Dcoder path
-        for i, ((_, spec), act_f) in layers[::-1]:
+        costs = AttributeDict()
+        costs.denois = AttributeDict()
+        for i, ((_, spec), act_f) in self.layers[::-1]:
             z_corr = corr.unlabeled.z[i]
             z_clean = clean.unlabeled.z[i]
             z_clean_s = clean.unlabeled.s.get(i)
             z_clean_m = clean.unlabeled.m.get(i)
-            fspec = layers[i + 1][1][0] if len(layers) > i + 1 else (None, None)
-            if i == top:
+
+            # It's the last layer
+            if i == len(self.layers) - 1:
+                fspec = (None, None)
                 ver = corr.unlabeled.h[i]
                 ver_dim = self.layer_dims[i]
                 top_g = True
             else:
+                fspec = self.layers[i + 1][1][0]
                 ver = est.z.get(i + 1)
                 ver_dim = self.layer_dims.get(i + 1)
                 top_g = False
@@ -151,67 +112,74 @@ class LadderAE():
                            fspec=fspec,
                            top_g=top_g)
 
-            if z_est is not None:
-                # Denoising cost
-                if z_clean_s:
-                    z_est_norm = (z_est - z_clean_m) / z_clean_s
-                else:
-                    z_est_norm = z_est
+            # The first layer
+            if z_clean_s:
+                z_est_norm = (z_est - z_clean_m) / z_clean_s
+            else:
+                z_est_norm = z_est
 
-                se = SquaredError('denois' + str(i))
-                costs.denois[i] = se.apply(z_est_norm.flatten(2),
-                                           z_clean.flatten(2)) \
-                    / np.prod(self.layer_dims[i], dtype=floatX)
-                costs.denois[i].name = 'denois' + str(i)
+            se = SquaredError('denois' + str(i))
+            costs.denois[i] = se.apply(z_est_norm.flatten(2),
+                                       z_clean.flatten(2)) \
+                / np.prod(self.layer_dims[i], dtype=floatX)
+            costs.denois[i].name = 'denois' + str(i)
 
             # Store references for later use
             est.z[i] = z_est
-            est.h[i] = self.apply_act(z_est, act_f)
+            est.h[i] = apply_act(z_est, act_f)
             est.s[i] = None
             est.m[i] = None
+        return est, costs
+
+    def apply(self, input_labeled, target_labeled, input_unlabeled):
+        self.layer_counter = 0
+        self.layer_dims = {0: self.input_dim}
+        self.lr = self.shared(self.default_lr, 'learning_rate', role=None)
+        top = len(self.layers) - 1
+
+        num_labeled = input_labeled.shape[0]
+        self.join = lambda l, u: T.concatenate([l, u], axis=0)
+        self.labeled = lambda x: x[:num_labeled] if x is not None else x
+        self.unlabeled = lambda x: x[num_labeled:] if x is not None else x
+        self.split_lu = lambda x: (self.labeled(x), self.unlabeled(x))
+
+        input_concat = self.join(input_labeled, input_unlabeled)
+
+        clean = self.encoder(input_concat, 'clean',
+                             input_noise_std=0.0,
+                             noise_std=[])
+        corr = self.encoder(input_concat, 'corr',
+                            input_noise_std=self.super_noise_std,
+                            noise_std=self.f_local_noise_std)
+
+        est, costs = self.decoder(clean, corr)
 
         # Costs
         y = target_labeled.flatten()
 
         costs.class_clean = CategoricalCrossEntropy().apply(
             y, clean.labeled.h[top])
-        costs.class_clean.name = 'cost_class_clean'
+        costs.class_clean.name = 'CE_clean'
 
         costs.class_corr = CategoricalCrossEntropy().apply(
             y, corr.labeled.h[top])
-        costs.class_corr.name = 'cost_class_corr'
+        costs.class_corr.name = 'CE_corr'
 
-        # This will be used for training
         costs.total = costs.class_corr * 1.0
-        for i in range(top + 1):
-            if costs.denois.get(i) and self.denoising_cost_x[i] > 0:
-                costs.total += costs.denois[i] * self.denoising_cost_x[i]
-        costs.total.name = 'cost_total'
+        for i in range(len(self.layers)):
+            costs.total += costs.denois[i] * self.denoising_cost_x[i]
+        costs.total.name = 'Total_cost'
+
+        self.costs = costs
 
         # Classification error
         mr = MisclassificationRate()
-        self.error.clean = mr.apply(y, clean.labeled.h[top]) * np.float32(100.)
-        self.error.clean.name = 'error_rate_clean'
+        self.error = mr.apply(y, clean.labeled.h[top]) * np.float32(100.)
+        self.error.name = 'Error_rate'
 
-    def apply_act(self, input, act_name):
-        if input is None:
-            return input
-        act = {
-            'relu': lambda x: T.maximum(0, x),
-            'leakyrelu': lambda x: T.switch(x > 0., x, 0.1 * x),
-            'linear': lambda x: x,
-            'softplus': lambda x: T.log(1. + T.exp(x)),
-            'sigmoid': lambda x: T.nnet.sigmoid(x),
-            'softmax': lambda x: T.nnet.softmax(x),
-        }.get(act_name)
-        assert act, 'unknown act %s' % act_name
-        if act_name == 'softmax':
-            input = input.flatten(2)
-        return act(input)
-
-    def annotate_bn(self, var, id, var_type, mb_size, size, norm_ax):
-        var_shape = np.array((1,) + size)
-        out_dim = np.prod(var_shape) / np.prod(var_shape[list(norm_ax)])
+    def annotate_bn(self, var, id, var_type, mb_size, size):
+        var_shape = np.array((1, size))
+        out_dim = np.prod(var_shape) / np.prod(var_shape[0])
         # Flatten the var - shared variable updating is not trivial otherwise,
         # as theano seems to believe a row vector is a matrix and will complain
         # about the updates
@@ -249,43 +217,49 @@ class LadderAE():
 
         return var.reshape(orig_shape)
 
-    def f(self, h, in_dim, spec, num, act_f, path_name, noise_std=0):
-        # Generates identifiers used for referencing shared variables.
-        # E.g. clean and corrupted encoders will end up using the same
-        # variable name and hence sharing parameters
-        gen_id = lambda s: '_'.join(['f', str(num), s])
-        layer_type, _ = spec
-
-        # Fully connected
-        if layer_type == "fc":
-            # h = h.flatten(2) if h.ndim > 2 else h
-            _, dim = spec
-            W = self.shared(self.rand_init(np.prod(in_dim), dim), gen_id('W'),
-                            role=WEIGHT)
-            z, output_size = T.dot(h, W), (dim,)
-            norm_ax = (0,)
-        elif layer_type == "lstm":
-            raise ValueError("Layer is not implemented yet: %s" % layer_type)
+    def apply_layer(self, layer_type, input_, in_dim, out_dim, layer_name):
+        # Since we pass this path twice (clean and corr encoder),we
+        # want to make sure that parameters of both layers are shared.
+        layer = self.shareds.get(layer_name)
+        if layer is not None:
+            return layer
         else:
-            raise ValueError("Unknown layer spec: %s" % layer_type)
+            if layer_type == 'fc':
+                linear = Linear(use_bias=False,
+                                name=layer_name,
+                                input_dim=in_dim,
+                                output_dim=out_dim,
+                                seed=1)
+                layer = linear.apply(input_)
+                linear.weights_init = IsotropicGaussian(1.0 / np.sqrt(in_dim))
+                linear.initialize()
+                self.shareds[layer_name] = layer
+
+            return layer
+
+    def f(self, h, in_dim, spec, num, act_f, path_name, noise_std=0):
+        layer_name = 'f_' + str(num)
+        layer_type, dim = spec
+
+        z = self.apply_layer(layer_type, h, in_dim, dim, layer_name)
 
         m = s = None
         z_l = self.labeled(z)
         z_u = self.unlabeled(z)
-        m = z_u.mean(norm_ax, keepdims=True)
-        s = z_u.var(norm_ax, keepdims=True)
+        m = z_u.mean(0, keepdims=True)
+        s = z_u.var(0, keepdims=True)
 
-        m_l = z_l.mean(norm_ax, keepdims=True)
-        s_l = z_l.var(norm_ax, keepdims=True)
+        m_l = z_l.mean(0, keepdims=True)
+        s_l = z_l.var(0, keepdims=True)
         if path_name == 'clean':
             # Batch normalization estimates the mean and variance of
             # validation and test sets based on the training set
             # statistics. The following annotates the computation of
             # running average to the graph.
-            m_l = self.annotate_bn(m_l, gen_id('bn'), 'mean', z_l.shape[0],
-                                   output_size, norm_ax)
-            s_l = self.annotate_bn(s_l, gen_id('bn'), 'var', z_l.shape[0],
-                                   output_size, norm_ax)
+            m_l = self.annotate_bn(m_l, layer_name + 'bn', 'mean',
+                                   z_l.shape[0], dim)
+            s_l = self.annotate_bn(s_l, layer_name + 'bn', 'var',
+                                   z_l.shape[0], dim)
         z = self.join(
             (z_l - m_l) / T.sqrt(s_l + np.float32(1e-10)),
             (z_u - m) / T.sqrt(s + np.float32(1e-10)))
@@ -296,54 +270,46 @@ class LadderAE():
         # z for lateral connection
         z_lat = z
         b_init, c_init = 0.0, 1.0
-        b_c_size = output_size[0]
+        b_c_size = dim
 
         # Add bias
         if act_f != 'linear':
-            z += self.shared(b_init * np.ones(b_c_size), gen_id('b'),
+            z += self.shared(b_init * np.ones(b_c_size), layer_name + 'b',
                              role=BIAS)
 
         # Add Gamma parameter if necessary. (Not needed for all act_f)
         if (act_f in ['sigmoid', 'tanh', 'softmax']):
-            c = self.shared(c_init * np.ones(b_c_size), gen_id('c'),
+            c = self.shared(c_init * np.ones(b_c_size), layer_name + 'c',
                             role=WEIGHT)
             z *= c
 
-        h = self.apply_act(z, act_f)
+        h = apply_act(z, act_f)
 
-        logger.info('  f%d: %s, %s,%s noise %.2f, params %s, dim %s -> %s' % (
-            num, layer_type, act_f, ' BN,',
-            noise_std, spec[1], in_dim, output_size))
-
-        return output_size, z_lat, m, s, h
+        return dim, z_lat, m, s, h
 
     def g(self, z_lat, z_ver, in_dims, out_dims, num, fspec, top_g):
         f_layer_type, dims = fspec
-        gen_id = lambda s: '_'.join(['g', str(num), s])
+        layer_name = 'g_' + str(num)
 
         in_dim = np.prod(dtype=floatX, a=in_dims)
         out_dim = np.prod(dtype=floatX, a=out_dims)
-        num_filters = out_dim
 
         if top_g:
             u = z_ver
         else:
-            W = self.shared(self.rand_init(in_dim, out_dim), gen_id('W'),
-                            role=WEIGHT)
-            u = T.dot(z_ver, W)
+            u = self.apply_layer(f_layer_type, z_ver,
+                                 in_dim, out_dim, layer_name)
 
         # Batch-normalize u
-        norm_ax = (0,) if u.ndim <= 2 else (0, -2, -1)
-        u -= u.mean(norm_ax, keepdims=True)
-        u /= T.sqrt(u.var(norm_ax, keepdims=True) +
-                    np.float32(1e-10))
+        u -= u.mean(0, keepdims=True)
+        u /= T.sqrt(u.var(0, keepdims=True) + np.float32(1e-10))
 
         # Define the g function
         z_lat = z_lat.flatten(2)
-        bi = lambda inits, name: self.shared(inits * np.ones(num_filters),
-                                             gen_id(name), role=BIAS)
-        wi = lambda inits, name: self.shared(inits * np.ones(num_filters),
-                                             gen_id(name), role=WEIGHT)
+        bi = lambda inits, name: self.shared(inits * np.ones(out_dim),
+                                             layer_name + name, role=BIAS)
+        wi = lambda inits, name: self.shared(inits * np.ones(out_dim),
+                                             layer_name + name, role=WEIGHT)
 
         sigval = bi(0., 'c1') + wi(1., 'c2') * z_lat
         sigval += wi(0., 'c3') * u + wi(0., 'c4') * z_lat * u

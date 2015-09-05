@@ -1,10 +1,9 @@
 import os
-
 import logging
 import numpy as np
 import theano
+import theano.tensor as T
 from pandas import DataFrame, read_hdf
-
 from blocks.extensions import Printing, SimpleExtension
 from blocks.main_loop import MainLoop
 from blocks.roles import add_role
@@ -296,3 +295,19 @@ def args_parser():
 
     args = ap.parse_args()
     return args
+
+
+def apply_act(input, act_name):
+    if input is None:
+        return input
+    act = {
+        'relu': lambda x: T.maximum(0, x),
+        'leakyrelu': lambda x: T.switch(x > 0., x, 0.1 * x),
+        'linear': lambda x: x,
+        'softplus': lambda x: T.log(1. + T.exp(x)),
+        'sigmoid': lambda x: T.nnet.sigmoid(x),
+        'softmax': lambda x: T.nnet.softmax(x),
+    }.get(act_name)
+    if act_name == 'softmax':
+        input = input.flatten(2)
+    return act(input)

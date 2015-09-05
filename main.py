@@ -57,7 +57,7 @@ def train(ladder, batch_size=100, labeled_samples=100,
 
     monitored_variables = [
         ladder.costs.class_corr, ladder.costs.class_clean,
-        ladder.error.clean, training_algorithm.total_gradient_norm,
+        ladder.error, training_algorithm.total_gradient_norm,
         ladder.costs.total] + ladder.costs.denois.values()
 
     data = get_mnist_data_dict(unlabeled_samples=unlabeled_samples,
