@@ -18,7 +18,7 @@ floatX = theano.config.floatX
 class LadderAE():
     def __init__(self):
         self.input_dim = 784
-        self.denoising_cost_x = (1000.0, 10.0, 0.1, 0.1, 0.1, 0.1, 0.1)
+        self.denoising_cost_x = (500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.super_noise_std = 0.3
         self.f_local_noise_std = (0.3,) * 7
         self.default_lr = 0.002
@@ -217,10 +217,18 @@ class LadderAE():
 
         return var.reshape(orig_shape)
 
+    def rand_init(self, in_dim, out_dim):
+        return self.rng.randn(in_dim, out_dim) / np.sqrt(in_dim)
+
     def apply_layer(self, layer_type, input_, in_dim, out_dim, layer_name):
         # Since we pass this path twice (clean and corr encoder),we
         # want to make sure that parameters of both layers are shared.
         layer = self.shareds.get(layer_name)
+        if layer_type == "fc":
+            W = self.shared(self.rand_init(in_dim, out_dim), layer_name + 'W',
+                            role=WEIGHT)
+            return T.dot(input_, W)
+
         if layer is not None:
             return layer
         else:
@@ -238,7 +246,7 @@ class LadderAE():
             return layer
 
     def f(self, h, in_dim, spec, num, act_f, path_name, noise_std=0):
-        layer_name = 'f_' + str(num)
+        layer_name = 'f_' + str(num) + '_'
         layer_type, dim = spec
 
         z = self.apply_layer(layer_type, h, in_dim, dim, layer_name)
@@ -289,7 +297,7 @@ class LadderAE():
 
     def g(self, z_lat, z_ver, in_dims, out_dims, num, fspec, top_g):
         f_layer_type, dims = fspec
-        layer_name = 'g_' + str(num)
+        layer_name = 'g_' + str(num) + '_'
 
         in_dim = np.prod(dtype=floatX, a=in_dims)
         out_dim = np.prod(dtype=floatX, a=out_dims)

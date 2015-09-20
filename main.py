@@ -15,8 +15,7 @@ from blocks.model import Model
 from blocks.roles import PARAMETER
 from utils import SaveLog, SaveParams, LRDecay
 from ladder import LadderAE
-from datasets import make_datastream
-from datasets import get_mnist_data_dict
+from mnist_dataset import get_mixed_datastream, get_dataset
 logger = logging.getLogger('main')
 
 
@@ -31,10 +30,10 @@ def setup_model():
     return ladder
 
 
-def train(ladder, batch_size=100, labeled_samples=100,
+def train(ladder, batch_size=100, labeled_samples=50000,
           unlabeled_samples=50000, valid_set_size=10000,
           num_epochs=150, valid_batch_size=100, lrate_decay=0.67,
-          save_path='results/mnist_100_full0'):
+          save_path='results/mnist_full'):
     # Setting Logger
     log_path = os.path.join(save_path, 'log.txt')
     fh = logging.FileHandler(filename=log_path)
@@ -43,7 +42,9 @@ def train(ladder, batch_size=100, labeled_samples=100,
     logger.info('Logging into %s' % log_path)
 
     # Training
-    all_params = ComputationGraph([ladder.costs.total]).parameters
+    model = Model(ladder.costs.total)
+    all_params = model.parameters
+    print len(all_params)
     logger.info('Found the following parameters: %s' % str(all_params))
 
     training_algorithm = GradientDescent(
@@ -60,18 +61,24 @@ def train(ladder, batch_size=100, labeled_samples=100,
         ladder.error, training_algorithm.total_gradient_norm,
         ladder.costs.total] + ladder.costs.denois.values()
 
-    data = get_mnist_data_dict(unlabeled_samples=unlabeled_samples,
-                               valid_set_size=valid_set_size)
+    dataset, indices = get_dataset(
+        unlabeled_samples=unlabeled_samples,
+        valid_set_size=valid_set_size)
 
-    train_data_stream = make_datastream(
-        data.train, data.train_ind, batch_size,
+    train_data_stream = get_mixed_datastream(
+        # 0 indicates train indices
+        dataset, indices[0], batch_size,
         n_labeled=labeled_samples,
         n_unlabeled=unlabeled_samples)
 
-    valid_data_stream = make_datastream(
-        data.valid, data.valid_ind, valid_batch_size,
-        n_labeled=len(data.valid_ind),
-        n_unlabeled=len(data.valid_ind))
+    # import ipdb; ipdb.set_trace()
+    # train_data_stream.get_epoch_iterator().next()
+
+    valid_data_stream = get_mixed_datastream(
+        # 1 indicates train indices
+        dataset, indices[1], valid_batch_size,
+        n_labeled=len(indices[1]),
+        n_unlabeled=len(indices[1]))
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
@@ -87,7 +94,7 @@ def train(ladder, batch_size=100, labeled_samples=100,
     main_loop = MainLoop(
         algorithm=training_algorithm,
         data_stream=train_data_stream,
-        model=Model(ladder.costs.total),
+        model=model,
         extensions=[
             train_monitoring,
             valid_monitoring,
