@@ -29,7 +29,7 @@ def parse_log(path, to_be_plotted):
     return results
 
 
-def pimp(path=None, xaxis='Epochs', yaxis='PER', title=None):
+def pimp(path=None, xaxis='Epochs', yaxis='Cross Entropy', title=None):
     plt.legend(fontsize=14)
     plt.xlabel(r'\textbf{' + xaxis + '}')
     plt.ylabel(r'\textbf{' + yaxis + '}')
@@ -49,25 +49,41 @@ def plot(x, y, xlabel='train', ylabel='dev', color='b',
     if y_steps is None:
         y_steps = range(len(y))
     plt.plot(x_steps, x, ls=':', c=color, lw=2, label=xlabel)
-    plt.plot(y_steps, y, c=color, marker='o', lw=2, label=ylabel)
+    plt.plot(y_steps, y, c=color, lw=2, label=ylabel)
+
+
+def best(path, what='valid_Error_rate'):
+    res = parse_log(path, [what])
+    return min(res[what])
+
+
+to_be_plotted = ['train_CE_clean', 'valid_CE_clean']
+# to_be_plotted = ['train_Total_cost', 'valid_Total_cost']
+yaxis = 'Cross Entropy'
+# yaxis = 'Total cost'
+titles = ['train ladder', 'valid ladder', 'train baseline', 'valid baseline']
+main_title = 'baseline vs ladder'
+
+file_1 = 'mnist_best/log.txt'
+file_2 = 'mnist_baseline_2015_09_26_at_12_25/log.txt'
 
 
 path = '/u/pezeshki/ladder_network/results/'
-log1 = path + 'mnist_2015_09_21_at_17_19/log.txt'
-to_be_plotted = ['train_CE_clean', 'valid_CE_clean']
+log1 = path + file_1
+print best(log1)
 results = parse_log(log1, to_be_plotted)
 plt.figure()
 plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
-     to_be_plotted[0], to_be_plotted[1], 'b')
+     titles[0], titles[1], 'b')
 
 
 path = '/u/pezeshki/ladder_network/results/'
-log1 = path + 'mnist_2015_09_21_at_17_06/log.txt'
-to_be_plotted = ['train_CE_clean', 'valid_CE_clean']
-results = parse_log(log1, to_be_plotted)
+log2 = path + file_2
+print best(log2)
+results = parse_log(log2, to_be_plotted)
 plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
-     to_be_plotted[0], to_be_plotted[1], 'r')
+     titles[2], titles[3], 'r')
 
 
-pimp(path=None, title='TITLE')
+pimp(path=None, yaxis=yaxis, title=main_title)
 plt.savefig(path + 'plot.png')

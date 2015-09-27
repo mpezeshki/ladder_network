@@ -6,10 +6,11 @@ import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 from blocks.bricks.cost import SquaredError
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
-from blocks.roles import PARAMETER, WEIGHT, BIAS
-from utils import shared_param, AttributeDict, apply_act
+from blocks.roles import PARAMETER, WEIGHT, BIAS, add_role
+from blocks.graph import add_annotation, Annotation
+from utils import shared_param, AttributeDict, apply_act, BNPARAM
 from blocks.bricks import Linear
-from blocks.initialization import IsotropicGaussian
+from utils import Glorot
 logger = logging.getLogger('main.model')
 floatX = theano.config.floatX
 
@@ -30,6 +31,60 @@ class LadderAE():
                        (4, (('fc', 250), 'relu')),
                        (5, (('fc', 250), 'relu')),
                        (6, (('fc', 10), 'softmax'))]
+
+    def counter(self):
+        name = 'counter'
+        p = self.shareds.get(name)
+        update = []
+        if p is None:
+            p_max_val = np.float32(10)
+            p = self.shared(np.float32(1), name, role=BNPARAM)
+            p_max = self.shared(p_max_val, name + '_max', role=BNPARAM)
+            update = [(p, T.clip(p + np.float32(1),
+                                 np.float32(0),
+                                 p_max)),
+                      (p_max, p_max_val)]
+        return (p, update)
+
+    def annotate_bn(self, var, id, var_type, mb_size, size):
+        var_shape = np.array((1, size))
+        out_dim = np.prod(var_shape) / np.prod(var_shape[0])
+        # Flatten the var - shared variable updating is not trivial otherwise,
+        # as theano seems to believe a row vector is a matrix and will complain
+        # about the updates
+        orig_shape = var.shape
+        var = var.flatten()
+        # Here we add the name and role, the variables will later be identified
+        # by these values
+        var.name = id + '_%s_clean' % var_type
+        add_role(var, BNPARAM)
+        shared_var = self.shared(np.zeros(out_dim),
+                                 name='shared_%s' % var.name, role=None)
+
+        # Update running average estimates. When the counter is reset to 1, it
+        # will clear its memory
+        cntr, c_up = self.counter()
+        one = np.float32(1)
+        run_avg = lambda new, old: one / cntr * new + (one - one / cntr) * old
+        if var_type == 'mean':
+            new_value = run_avg(var, shared_var)
+        elif var_type == 'var':
+            mb_size = T.cast(mb_size, 'float32')
+            new_value = run_avg(mb_size / (mb_size - one) * var, shared_var)
+        else:
+            raise NotImplemented('Unknown batch norm var %s' % var_type)
+
+        def annotate_update(update, tag_to):
+            a = Annotation()
+            for (var, up) in update:
+                a.updates[var] = up
+            add_annotation(tag_to, a)
+
+        # Add the counter update to the annotated update if it is the first
+        # instance of a counter
+        annotate_update([(shared_var, new_value)] + c_up, var)
+
+        return var.reshape(orig_shape)
 
     def shared(self, init, name, cast_float32=True, role=PARAMETER, **kwargs):
         p = self.shareds.get(name)
@@ -94,9 +149,12 @@ class LadderAE():
                            fspec=fspec,
                            top_g=top_g)
 
-            # The first layer
+            # if it is not the first layer
             if z_clean_s:
                 z_est_norm = (z_est - z_clean_m) / z_clean_s
+                # z_est_norm = z_est - z_est.mean(0, keepdims=True)
+                # z_est_norm /= T.sqrt(
+                #     z_est_norm.var(0, keepdims=True) + np.float32(1e-10))
             else:
                 z_est_norm = z_est
 
@@ -127,6 +185,7 @@ class LadderAE():
         # Costs
         y = target.flatten()
 
+        self.output = clean.h[top]
         costs.class_clean = CategoricalCrossEntropy().apply(
             y, clean.h[top])
         costs.class_clean.name = 'CE_clean'
@@ -154,26 +213,24 @@ class LadderAE():
         # Since we pass this path twice (clean and corr encoder),we
         # want to make sure that parameters of both layers are shared.
         layer = self.shareds.get(layer_name)
-        if layer_type == "fc":
-            W = self.shared(self.rand_init(in_dim, out_dim), layer_name + 'W',
-                            role=WEIGHT)
-            return T.dot(input_, W)
+        # if layer_type == "fc":
+        #     W = self.shared(self.rand_init(in_dim, out_dim), layer_name + 'W',
+        #                     role=WEIGHT)
+        #     return T.dot(input_, W)
 
-        if layer is not None:
-            return layer
-        else:
+        if layer is None:
             if layer_type == 'fc':
                 linear = Linear(use_bias=False,
                                 name=layer_name,
                                 input_dim=in_dim,
                                 output_dim=out_dim,
                                 seed=1)
-                layer = linear.apply(input_)
-                linear.weights_init = IsotropicGaussian(1.0 / np.sqrt(in_dim))
+                linear.weights_init = Glorot(self.rng, in_dim, out_dim)
                 linear.initialize()
+                layer = linear
                 self.shareds[layer_name] = layer
 
-            return layer
+        return layer.apply(input_)
 
     def f(self, h, in_dim, layer_type, dim, num, act_f, noise_std):
         layer_name = 'f_' + str(num) + '_'
@@ -184,6 +241,12 @@ class LadderAE():
         m = z.mean(0, keepdims=True)
         s = z.var(0, keepdims=True)
 
+        # if noise_std == 0:
+        #     m = self.annotate_bn(m, layer_name + 'bn', 'mean',
+        #                          z.shape[0], dim)
+        #     s = self.annotate_bn(s, layer_name + 'bn', 'var',
+        #                          z.shape[0], dim)
+
         z = (z - m) / T.sqrt(s + np.float32(1e-10))
 
         if noise_std > 0:
@@ -191,17 +254,15 @@ class LadderAE():
 
         # z for lateral connection
         z_lat = z
-        b_init, c_init = 0.0, 1.0
-        b_c_size = dim
 
         # Add bias
         if act_f != 'linear':
-            z += self.shared(b_init * np.ones(b_c_size), layer_name + 'b',
+            z += self.shared(0.0 * np.ones(dim), layer_name + 'b',
                              role=BIAS)
 
         # Add Gamma parameter if necessary. (Not needed for all act_f)
         if (act_f in ['sigmoid', 'tanh', 'softmax']):
-            c = self.shared(c_init * np.ones(b_c_size), layer_name + 'c',
+            c = self.shared(1.0 * np.ones(dim), layer_name + 'c',
                             role=WEIGHT)
             z *= c
 
@@ -233,11 +294,47 @@ class LadderAE():
         wi = lambda inits, name: self.shared(inits * np.ones(out_dim),
                                              layer_name + name, role=WEIGHT)
 
-        sigval = bi(0., 'c1') + wi(1., 'c2') * z_lat
-        sigval += wi(0., 'c3') * u + wi(0., 'c4') * z_lat * u
-        sigval = T.nnet.sigmoid(sigval)
-        z_est = bi(0., 'a1') + wi(1., 'a2') * z_lat + wi(1., 'b1') * sigval
-        z_est += wi(0., 'a3') * u + wi(0., 'a4') * z_lat * u
+        type_ = 'simple'
+
+        if type_ == 'wierd':
+            sigval = (bi(0., 'c1') +
+                      wi(1., 'c2') * z_lat +
+                      wi(0., 'c3') * u +
+                      wi(0., 'c4') * z_lat * u)
+            sigval = T.nnet.sigmoid(sigval)
+            z_est = (bi(0., 'a1') +
+                     wi(1., 'a2') * z_lat +
+                     wi(0., 'a3') * u +
+                     wi(0., 'a4') * z_lat * u +
+                     wi(1., 'b1') * sigval)
+
+        elif type_ == 'simple':
+            z_est = (bi(0., 'a1') +
+                     wi(1., 'a2') * z_lat +
+                     wi(0., 'a3') * u +
+                     wi(0., 'a4') * z_lat * u)
+
+        elif type_ == 'relu':
+            W = self.shared(self.rand_init(2 * out_dim, out_dim),
+                            layer_name + 'W',
+                            role=WEIGHT)
+            B = self.shared(0.0 * np.ones(out_dim), layer_name + 'b',
+                            role=BIAS)
+            z_est = T.dot(T.concatenate([u, z_lat], axis=1), W) + B
+            z_est = apply_act(z_est, 'relu')
+
+        elif type_ == 'sigmoid':
+            b = bi(0., 'b')
+            c = wi(1., 'c')
+            z_est = apply_act((u + b) * c, 'sigmoid')
+
+        elif type_ == 'yoshua':
+            batch_size = u[:, 0:1].shape
+            srng = T.shared_randomstreams.RandomStreams(
+                self.rng.randint(999999))
+            mask = srng.binomial(n=1, p=0.5, size=batch_size)
+            mask = T.addbroadcast(mask, 1)
+            z_est = mask * z_lat + (1 - mask) * u
 
         if (type(out_dims) == tuple and
                 len(out_dims) > 1.0 and z_est.ndim < 4):

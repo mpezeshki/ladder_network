@@ -1,18 +1,16 @@
 import logging
 import os
 import time
-import numpy
+import numpy as np
 import theano
 from theano.tensor.type import TensorType
 from blocks.algorithms import GradientDescent, Adam
 from blocks.extensions import FinishAfter, Printing
 from blocks.extensions.monitoring import (TrainingDataMonitoring,
                                           DataStreamMonitoring)
-from blocks.filter import VariableFilter
 from blocks.graph import ComputationGraph
 from blocks.main_loop import MainLoop
 from blocks.model import Model
-from blocks.roles import PARAMETER
 from utils import SaveLog, SaveParams, LRDecay
 from ladder import LadderAE
 from datasets import get_streams
@@ -44,6 +42,7 @@ def train(ladder, batch_size=100, num_train_examples=50000,
     model = Model(ladder.costs.total)
     all_params = model.parameters
     print len(all_params)
+    print all_params
 
     training_algorithm = GradientDescent(
         cost=ladder.costs.total, params=all_params,
@@ -81,7 +80,7 @@ def train(ladder, batch_size=100, num_train_examples=50000,
             train_monitoring,
             valid_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
-            SaveParams(None, all_params, save_path, after_epoch=True),
+            SaveParams('valid_CE_clean', model, save_path),
             SaveLog(save_path, after_epoch=True),
             LRDecay(lr=ladder.lr,
                     decay_first=num_epochs * lrate_decay,
@@ -92,18 +91,44 @@ def train(ladder, batch_size=100, num_train_examples=50000,
 
 
 def evaluate(ladder, load_path):
-    with open(load_path + '/trained_params.npz') as f:
-        loaded = numpy.load(f)
-        cg = ComputationGraph([ladder.costs.total])
-        current_params = VariableFilter(roles=[PARAMETER])(cg.variables)
-        for param in current_params:
-            assert param.get_value().shape == loaded[param.name].shape
-            param.set_value(loaded[param.name])
+    with open(load_path + '/trained_params_best.npz') as f:
+        loaded = np.load(f)
+        model = Model(ladder.costs.total)
+        params_dicts = model.params
+        params_names = params_dicts.keys()
+        for param_name in params_names:
+            param = params_dicts[param_name]
+            # '/f_6_.W' --> 'f_6_.W'
+            slash_index = param_name.find('/')
+            param_name = param_name[slash_index + 1:]
+            assert param.get_value().shape == loaded[param_name].shape
+            param.set_value(loaded[param_name])
+
+    train_data_stream, valid_data_stream = get_streams(50000, 100)
+    cg = ComputationGraph([ladder.costs.total])
+    # f = theano.function([cg.inputs[0]], [ladder.output])
+    X, Y = train_data_stream.get_epoch_iterator().next()
+    from ploting2 import bar_chart
+    vertical_all = []
+    lateral_all = []
+    mixed_all = []
+    for i in range(7):
+        name_vertical = 'g_' + str(i) + "_a3"
+        name_lateral = 'g_' + str(i) + "_a2"
+        name_mixed = 'g_' + str(i) + "_a4"
+        vertical_all += [np.mean(np.abs(list(
+            params_dicts[name_vertical].get_value())))]
+        lateral_all += [np.mean(np.abs(list(
+            params_dicts[name_lateral].get_value())))]
+        mixed_all += [np.mean(np.abs(list(
+            params_dicts[name_mixed].get_value())))]
+    N = len(vertical_all)
+    bar_chart(N, vertical_all, lateral_all, mixed_all)
+    import ipdb; ipdb.set_trace()
 
 
 if __name__ == "__main__":
-    load_path = None
-    t_start = time.time()
+    load_path = '/u/pezeshki/ladder_network/results/mnist_best'
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
     if load_path is None:

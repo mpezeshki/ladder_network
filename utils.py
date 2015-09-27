@@ -1,4 +1,3 @@
-import os
 import logging
 import numpy as np
 import theano
@@ -6,6 +5,7 @@ import theano.tensor as T
 from blocks.extensions import SimpleExtension
 from blocks.roles import add_role
 from blocks.roles import AuxiliaryRole
+from blocks.initialization import NdarrayInitialization
 
 logger = logging.getLogger('main.utils')
 
@@ -49,32 +49,35 @@ class AttributeDict(dict):
 
 class SaveParams(SimpleExtension):
     """Finishes the training process when triggered."""
-    def __init__(self, trigger_var, params, save_path, **kwargs):
+    def __init__(self, early_stop_var, model, save_path, **kwargs):
         super(SaveParams, self).__init__(**kwargs)
-        if trigger_var is None:
-            self.var_name = None
-        else:
-            self.var_name = trigger_var[0] + '_' + trigger_var[1].name
+        self.early_stop_var = early_stop_var
         self.save_path = save_path
-        self.params = params
+        params_dicts = model.params
+        self.params_names = params_dicts.keys()
+        self.params_values = params_dicts.values()
         self.to_save = {}
         self.best_value = None
         self.add_condition('after_training', self.save)
         self.add_condition('on_interrupt', self.save)
+        self.add_condition('after_epoch', self.do)
 
     def save(self, which_callback, *args):
-        if self.var_name is None:
-            self.to_save = {v.name: v.get_value() for v in self.params}
+        to_save = {}
+        for p_name, p_value in zip(self.params_names, self.params_values):
+            to_save[p_name] = p_value.get_value()
         path = self.save_path + '/trained_params'
-        np.savez_compressed(path, **self.to_save)
+        np.savez_compressed(path, **to_save)
 
     def do(self, which_callback, *args):
-        if self.var_name is None:
-            return
-        val = self.main_loop.log.current_row[self.var_name]
+        val = self.main_loop.log.current_row[self.early_stop_var]
         if self.best_value is None or val < self.best_value:
             self.best_value = val
-        self.to_save = {v.name: v.get_value() for v in self.params}
+            to_save = {}
+            for p_name, p_value in zip(self.params_names, self.params_values):
+                to_save[p_name] = p_value.get_value()
+            path = self.save_path + '/trained_params_best'
+            np.savez_compressed(path, **to_save)
 
 
 class SaveLog(SimpleExtension):
@@ -103,3 +106,14 @@ def apply_act(input, act_name):
     if act_name == 'softmax':
         input = input.flatten(2)
     return act(input)
+
+
+class Glorot(NdarrayInitialization):
+    def __init__(self, rng, in_dim, out_dim):
+        self.rng = rng
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+
+    def generate(self, rng, shape):
+        m = self.rng.randn(self.in_dim, self.out_dim) / np.sqrt(self.in_dim)
+        return m.astype(theano.config.floatX)
