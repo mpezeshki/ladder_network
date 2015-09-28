@@ -2,10 +2,27 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from datasets import get_streams
+import theano
+from blocks.graph import ComputationGraph
 
 
-def bar_chart(N, vertical, lateral, mixed):
-    ind = np.arange(N)  # the x locations for the groups
+def bar_chart(params_dicts):
+    vertical = []
+    lateral = []
+    mixed = []
+    for i in range(7):
+        name_vertical = 'g_' + str(i) + "_a3"
+        name_lateral = 'g_' + str(i) + "_a2"
+        name_mixed = 'g_' + str(i) + "_a4"
+        vertical += [np.mean(np.abs(list(
+            params_dicts[name_vertical].get_value())))]
+        lateral += [np.mean(np.abs(list(
+            params_dicts[name_lateral].get_value())))]
+        mixed += [np.mean(np.abs(list(
+            params_dicts[name_mixed].get_value())))]
+
+    ind = np.arange(len(vertical))  # the x locations for the groups
     width = 0.25       # the width of the bars
 
     fig, ax = plt.subplots()
@@ -22,8 +39,34 @@ def bar_chart(N, vertical, lateral, mixed):
 
     plt.savefig('bar_chart.png')
 
-N = 200
-vertical = list(np.random.randn(N, 1))
-lateral = list(np.random.randn(N, 1))
-mixed = list(np.random.randn(N, 1))
-bar_chart(N, vertical, lateral, mixed)
+
+def plot_representations(ladder, params_dicts):
+    train_data_stream, valid_data_stream = get_streams(50000, 50000)
+    data = train_data_stream.get_epoch_iterator().next()
+    cg = ComputationGraph([ladder.costs.total])
+    f = theano.function(
+        [cg.inputs[0]],
+        [ladder.wz[-1], ladder.wu[-1], ladder.wzu[-1], ladder.ests[-1]])
+
+    wz, wu, wzu, est = f(data[0])
+
+    plt.imshow(
+        np.vstack(
+            [np.swapaxes(
+                data[0][8:18].reshape(10, 28, 28), 0, 1).reshape(28, 280),
+             np.swapaxes(
+                est[8:18].reshape(10, 28, 28), 0, 1).reshape(28, 280),
+             np.swapaxes(
+                wz[8:18].reshape(10, 28, 28), 0, 1).reshape(28, 280),
+             np.swapaxes(
+                wu[8:18].reshape(10, 28, 28), 0, 1).reshape(28, 280),
+             np.swapaxes(
+                wzu[8:18].reshape(10, 28, 28), 0, 1).reshape(28, 280),
+             np.swapaxes(
+                np.vstack([params_dicts['g_0_a1'].get_value() for i in
+                           range(10)]).reshape(10, 28, 28), 0, 1).reshape(
+                28, 280)]),
+        cmap=plt.gray(), interpolation='nearest', vmin=0, vmax=1)
+    plt.savefig('est.png')
+
+    import ipdb; ipdb.set_trace()

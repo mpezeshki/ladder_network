@@ -104,31 +104,14 @@ def evaluate(ladder, load_path):
             assert param.get_value().shape == loaded[param_name].shape
             param.set_value(loaded[param_name])
 
-    train_data_stream, valid_data_stream = get_streams(50000, 100)
-    cg = ComputationGraph([ladder.costs.total])
-    # f = theano.function([cg.inputs[0]], [ladder.output])
-    X, Y = train_data_stream.get_epoch_iterator().next()
-    from ploting2 import bar_chart
-    vertical_all = []
-    lateral_all = []
-    mixed_all = []
-    for i in range(7):
-        name_vertical = 'g_' + str(i) + "_a3"
-        name_lateral = 'g_' + str(i) + "_a2"
-        name_mixed = 'g_' + str(i) + "_a4"
-        vertical_all += [np.mean(np.abs(list(
-            params_dicts[name_vertical].get_value())))]
-        lateral_all += [np.mean(np.abs(list(
-            params_dicts[name_lateral].get_value())))]
-        mixed_all += [np.mean(np.abs(list(
-            params_dicts[name_mixed].get_value())))]
-    N = len(vertical_all)
-    bar_chart(N, vertical_all, lateral_all, mixed_all)
-    import ipdb; ipdb.set_trace()
+    from ploting2 import bar_chart, plot_representations
+    # plot_representations(ladder, params_dicts)
+    # bar_chart(params_dicts)
 
 
 if __name__ == "__main__":
     load_path = '/u/pezeshki/ladder_network/results/mnist_best'
+    # load_path = None
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
     if load_path is None:

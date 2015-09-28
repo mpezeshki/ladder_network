@@ -120,6 +120,10 @@ class LadderAE():
         return d
 
     def decoder(self, clean, corr):
+        self.wz = []
+        self.wu = []
+        self.wzu = []
+        self.ests = []
         est = self.new_activation_dict()
         costs = AttributeDict()
         costs.denois = AttributeDict()
@@ -141,13 +145,17 @@ class LadderAE():
                 ver_dim = self.layer_dims.get(i + 1)
                 top_g = False
 
-            z_est = self.g(z_lat=z_corr,
-                           z_ver=ver,
-                           in_dims=ver_dim,
-                           out_dims=self.layer_dims[i],
-                           num=i,
-                           fspec=fspec,
-                           top_g=top_g)
+            z_est, wz, wu, wzu = self.g(z_lat=z_corr,
+                                        z_ver=ver,
+                                        in_dims=ver_dim,
+                                        out_dims=self.layer_dims[i],
+                                        num=i,
+                                        fspec=fspec,
+                                        top_g=top_g)
+            self.wz += [wz]
+            self.wu += [wu]
+            self.wzu += [wzu]
+            self.ests += [z_est]
 
             # if it is not the first layer
             if z_clean_s:
@@ -309,10 +317,14 @@ class LadderAE():
                      wi(1., 'b1') * sigval)
 
         elif type_ == 'simple':
+            wz = wi(1., 'a2') * z_lat
+            wu = wi(0., 'a3') * u
+            wzu = wi(0., 'a4') * z_lat * u
+
             z_est = (bi(0., 'a1') +
-                     wi(1., 'a2') * z_lat +
-                     wi(0., 'a3') * u +
-                     wi(0., 'a4') * z_lat * u)
+                     wz +
+                     wu +
+                     wzu)
 
         elif type_ == 'relu':
             W = self.shared(self.rand_init(2 * out_dim, out_dim),
@@ -340,4 +352,4 @@ class LadderAE():
                 len(out_dims) > 1.0 and z_est.ndim < 4):
             z_est = z_est.reshape((z_est.shape[0],) + out_dims)
 
-        return z_est
+        return z_est, wz, wu, wzu
