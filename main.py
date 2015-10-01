@@ -104,14 +104,15 @@ def evaluate(ladder, load_path):
             assert param.get_value().shape == loaded[param_name].shape
             param.set_value(loaded[param_name])
 
-    from ploting2 import bar_chart, plot_representations
+    # from ploting2 import bar_chart, plot_representations, compute_noises
+    # compute_noises(ladder)
     # plot_representations(ladder, params_dicts)
     # bar_chart(params_dicts)
 
 
 if __name__ == "__main__":
-    load_path = '/u/pezeshki/ladder_network/results/mnist_best'
-    # load_path = None
+    # load_path = '/u/pezeshki/ladder_network/results/mnist_best'
+    load_path = None
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
     if load_path is None:

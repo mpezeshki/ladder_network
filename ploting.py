@@ -61,11 +61,11 @@ to_be_plotted = ['train_CE_clean', 'valid_CE_clean']
 # to_be_plotted = ['train_Total_cost', 'valid_Total_cost']
 yaxis = 'Cross Entropy'
 # yaxis = 'Total cost'
-titles = ['train ladder', 'valid ladder', 'train baseline', 'valid baseline']
-main_title = 'baseline vs ladder'
+titles = ['train ladder standard', 'valid ladder standard', 'train no bn', 'valid no bn']
+main_title = 'no batch-norm'
 
 file_1 = 'mnist_best/log.txt'
-file_2 = 'mnist_baseline_2015_09_26_at_12_25/log.txt'
+file_2 = 'mnist_2015_10_01_at_19_00/log.txt'
 
 
 path = '/u/pezeshki/ladder_network/results/'
@@ -77,7 +77,6 @@ plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
      titles[0], titles[1], 'b')
 
 
-path = '/u/pezeshki/ladder_network/results/'
 log2 = path + file_2
 print best(log2)
 results = parse_log(log2, to_be_plotted)
