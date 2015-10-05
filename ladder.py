@@ -18,7 +18,8 @@ class LadderAE():
     def __init__(self):
         self.input_dim = 784
         self.denoising_cost_x = (500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        self.noise_std = (0.3,) * 7
+        # self.noise_std = (0.3,) * 7
+        self.noise_std = (0.55, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.default_lr = 0.002
         self.shareds = OrderedDict()
         self.rstream = RandomStreams(seed=1)
@@ -66,7 +67,6 @@ class LadderAE():
         return d
 
     def decoder(self, clean, corr):
-        self.ests = []
         est = self.new_activation_dict()
         costs = AttributeDict()
         costs.denois = AttributeDict()
@@ -95,7 +95,6 @@ class LadderAE():
                            num=i,
                            fspec=fspec,
                            top_g=top_g)
-            self.ests += [z_est]
 
             # For semi-supervised version
             # if z_clean_s:
@@ -125,7 +124,7 @@ class LadderAE():
         clean = self.encoder(input, noise_std=[0])
         corr = self.encoder(input, noise_std=self.noise_std)
 
-        est, costs = self.decoder(clean, corr)
+        ests, costs = self.decoder(clean, corr)
 
         # Costs
         y = target.flatten()
@@ -241,8 +240,8 @@ class LadderAE():
                      wi(1., 'b1') * sigval)
 
         elif type_ == 'simple':
-            wz = wi(1., 'a2') * z_lat
             wu = wi(0., 'a3') * u
+            wz = wi(1., 'a2') * z_lat
             wzu = wi(0., 'a4') * z_lat * u
 
             z_est = (bi(0., 'a1') +

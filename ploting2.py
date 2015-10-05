@@ -41,7 +41,7 @@ def bar_chart(params_dicts):
 
 
 def plot_representations(ladder, params_dicts):
-    train_data_stream, valid_data_stream = get_streams(50000, 50000)
+    train_data_stream, _, _ = get_streams(60000, 60000)
     data = train_data_stream.get_epoch_iterator().next()
     cg = ComputationGraph([ladder.costs.total])
     f = theano.function(
@@ -74,7 +74,7 @@ def compute_noises(ladder):
     cg = ComputationGraph([ladder.costs.total])
     f_clean = theano.function([cg.inputs[0]], ladder.clean_zs)
     f_corr = theano.function([cg.inputs[0]], ladder.corr_zs)
-    train_data_stream, valid_data_stream = get_streams(50000, 50000)
+    train_data_stream, _, _ = get_streams(60000, 60000)
     data = train_data_stream.get_epoch_iterator().next()
     rs_clean = f_clean(data[0])
     rs_corr = f_corr(data[0])

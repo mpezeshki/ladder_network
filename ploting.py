@@ -52,20 +52,20 @@ def plot(x, y, xlabel='train', ylabel='dev', color='b',
     plt.plot(y_steps, y, c=color, lw=2, label=ylabel)
 
 
-def best(path, what='valid_Error_rate'):
+def best(path, what='test_Error_rate'):
     res = parse_log(path, [what])
     return min(res[what])
 
 
-to_be_plotted = ['train_CE_clean', 'valid_CE_clean']
-# to_be_plotted = ['train_Total_cost', 'valid_Total_cost']
+to_be_plotted = ['train_CE_clean', 'test_CE_clean']
+# to_be_plotted = ['train_Total_cost', 'test_Total_cost']
 yaxis = 'Cross Entropy'
 # yaxis = 'Total cost'
-titles = ['train ladder standard', 'valid ladder standard', 'train no bn', 'valid no bn']
-main_title = 'no batch-norm'
+titles = ['train ladder standard', 'test ladder standard', 'train 1st layer noise 0.55', 'test 1st layer noise 0.55']
+main_title = 'Noise at first layer'
 
-file_1 = 'mnist_best/log.txt'
-file_2 = 'mnist_2015_10_01_at_19_00/log.txt'
+file_1 = 'mnist_ladder_testset_2015_10_05_at_10_49/log.txt'
+file_2 = 'mnist_ladder_testset_2015_10_05_at_10_51/log.txt'
 
 
 path = '/u/pezeshki/ladder_network/results/'
@@ -78,7 +78,7 @@ plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
 
 
 log2 = path + file_2
-print best(log2)
+print best(log2, 'test_Error_rate')
 results = parse_log(log2, to_be_plotted)
 plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
      titles[2], titles[3], 'r')

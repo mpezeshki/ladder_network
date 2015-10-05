@@ -31,7 +31,7 @@ def train(ladder, batch_size=100, num_train_examples=60000,
           num_epochs=150, lrate_decay=0.67):
     # Setting Logger
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/mnist_' + timestr
+    save_path = 'results/mnist_testset_keep_last_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -113,7 +113,7 @@ def evaluate(ladder, load_path):
 
 
 if __name__ == "__main__":
-    # load_path = '/u/pezeshki/ladder_network/results/mnist_best'
+    # load_path = '/u/pezeshki/ladder_network/results/mnist_ladder_baseline_69'
     load_path = None
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
