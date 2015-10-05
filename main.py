@@ -27,7 +27,7 @@ def setup_model():
     return ladder
 
 
-def train(ladder, batch_size=100, num_train_examples=50000,
+def train(ladder, batch_size=100, num_train_examples=60000,
           num_epochs=150, lrate_decay=0.67):
     # Setting Logger
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
@@ -58,7 +58,7 @@ def train(ladder, batch_size=100, num_train_examples=50000,
         ladder.error, training_algorithm.total_gradient_norm,
         ladder.costs.total] + ladder.costs.denois.values()
 
-    train_data_stream, valid_data_stream = get_streams(
+    train_data_stream, valid_data_stream, test_data_stream = get_streams(
         num_train_examples, batch_size)
 
     train_monitoring = TrainingDataMonitoring(
@@ -68,8 +68,8 @@ def train(ladder, batch_size=100, num_train_examples=50000,
 
     valid_monitoring = DataStreamMonitoring(
         variables=monitored_variables,
-        data_stream=valid_data_stream,
-        prefix="valid",
+        data_stream=test_data_stream,
+        prefix="test",
         after_epoch=True)
 
     main_loop = MainLoop(
@@ -80,7 +80,7 @@ def train(ladder, batch_size=100, num_train_examples=50000,
             train_monitoring,
             valid_monitoring,
             FinishAfter(after_n_epochs=num_epochs),
-            SaveParams('valid_CE_clean', model, save_path),
+            SaveParams('test_CE_corr', model, save_path),
             SaveLog(save_path, after_epoch=True),
             LRDecay(lr=ladder.lr,
                     decay_first=num_epochs * lrate_decay,
@@ -103,6 +103,8 @@ def evaluate(ladder, load_path):
             param_name = param_name[slash_index + 1:]
             assert param.get_value().shape == loaded[param_name].shape
             param.set_value(loaded[param_name])
+    import ipdb
+    ipdb.set_trace()
 
     # from ploting2 import bar_chart, plot_representations, compute_noises
     # compute_noises(ladder)

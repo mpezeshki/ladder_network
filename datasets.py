@@ -18,7 +18,7 @@ class Flatten(Transformer):
         return flatten_data
 
 
-def get_streams(num_train_examples, batch_size):
+def get_streams(num_train_examples, batch_size, use_test=True):
     dataset = MNIST(("train",))
     all_ind = numpy.arange(dataset.num_examples)
     rng = numpy.random.RandomState(seed=1)
@@ -31,8 +31,21 @@ def get_streams(num_train_examples, batch_size):
         dataset,
         iteration_scheme=ShuffledScheme(indices_train, batch_size)))
 
-    valid_stream = Flatten(DataStream.default_stream(
-        dataset,
-        iteration_scheme=ShuffledScheme(indices_valid, batch_size)))
+    valid_stream = None
+    if len(indices_valid) != 0:
+        valid_stream = Flatten(DataStream.default_stream(
+            dataset,
+            iteration_scheme=ShuffledScheme(indices_valid, batch_size)))
 
-    return tarin_stream, valid_stream
+    test_stream = None
+    if use_test:
+        dataset = MNIST(("test",))
+        ind = numpy.arange(dataset.num_examples)
+        rng = numpy.random.RandomState(seed=1)
+        rng.shuffle(all_ind)
+
+        test_stream = Flatten(DataStream.default_stream(
+            dataset,
+            iteration_scheme=ShuffledScheme(ind, batch_size)))
+
+    return tarin_stream, valid_stream, test_stream
