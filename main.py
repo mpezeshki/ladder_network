@@ -31,7 +31,7 @@ def train(ladder, batch_size=100, num_train_examples=60000,
           num_epochs=150, lrate_decay=0.67):
     # Setting Logger
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/mnist_testset_keep_last_' + timestr
+    save_path = 'results/mnist_standard_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -45,7 +45,7 @@ def train(ladder, batch_size=100, num_train_examples=60000,
     print all_params
 
     training_algorithm = GradientDescent(
-        cost=ladder.costs.total, params=all_params,
+        cost=ladder.costs.total, parameters=all_params,
         step_rule=Adam(learning_rate=ladder.lr))
 
     # Fetch all batch normalization updates. They are in the clean path.
@@ -94,7 +94,7 @@ def evaluate(ladder, load_path):
     with open(load_path + '/trained_params_best.npz') as f:
         loaded = np.load(f)
         model = Model(ladder.costs.total)
-        params_dicts = model.params
+        params_dicts = model.get_parameter_dict()
         params_names = params_dicts.keys()
         for param_name in params_names:
             param = params_dicts[param_name]
@@ -103,6 +103,16 @@ def evaluate(ladder, load_path):
             param_name = param_name[slash_index + 1:]
             assert param.get_value().shape == loaded[param_name].shape
             param.set_value(loaded[param_name])
+
+    train_data_stream, valid_data_stream, test_data_stream = get_streams(
+        50000, 10000)
+    test_data = test_data_stream.get_epoch_iterator().next()
+    test_data_input = test_data[0]
+    test_data_target = test_data[1]
+    print 'Compiling ...'
+    cg = ComputationGraph([ladder.costs.total])
+    eval_ = theano.function(cg.inputs, ladder.error)
+    print 'Test_set_Error: ' + str(eval_(test_data_input, test_data_target))
     import ipdb
     ipdb.set_trace()
 
@@ -113,8 +123,8 @@ def evaluate(ladder, load_path):
 
 
 if __name__ == "__main__":
-    # load_path = '/u/pezeshki/ladder_network/results/mnist_ladder_baseline_69'
-    load_path = None
+    load_path = '/u/pezeshki/ladder_network/results/mnist_standard_2015_10_08_at_15_53'
+    # load_path = None
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
     if load_path is None:

@@ -61,11 +61,11 @@ to_be_plotted = ['train_CE_clean', 'test_CE_clean']
 # to_be_plotted = ['train_Total_cost', 'test_Total_cost']
 yaxis = 'Cross Entropy'
 # yaxis = 'Total cost'
-titles = ['train ladder standard', 'test ladder standard', 'train 1st layer noise 0.55', 'test 1st layer noise 0.55']
-main_title = 'Noise at first layer'
+titles = ['train ladder standard', 'test ladder standard', 'train only last lateral', 'test only last lateral']
+main_title = 'Keeping the last lateral connection'
 
-file_1 = 'mnist_ladder_testset_2015_10_05_at_10_49/log.txt'
-file_2 = 'mnist_ladder_testset_2015_10_05_at_10_51/log.txt'
+file_1 = 'mnist_standard_2015_10_05_at_13_52/log.txt'
+file_2 = 'mnist_standard_2015_10_08_at_15_53/log.txt'
 
 
 path = '/u/pezeshki/ladder_network/results/'

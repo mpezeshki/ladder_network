@@ -17,9 +17,11 @@ floatX = theano.config.floatX
 class LadderAE():
     def __init__(self):
         self.input_dim = 784
-        self.denoising_cost_x = (500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        # self.noise_std = (0.3,) * 7
-        self.noise_std = (0.55, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        # self.denoising_cost_x = (500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        # self.denoising_cost_x = (4000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self.denoising_cost_x = (1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1)
+        self.noise_std = (0.3,) * 7
+        # self.noise_std = (0.55, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.default_lr = 0.002
         self.shareds = OrderedDict()
         self.rstream = RandomStreams(seed=1)
@@ -225,7 +227,7 @@ class LadderAE():
         wi = lambda inits, name: self.shared(inits * np.ones(out_dim),
                                              layer_name + name, role=WEIGHT)
 
-        type_ = 'simple'
+        type_ = 'wierd'
 
         if type_ == 'wierd':
             sigval = (bi(0., 'c1') +
@@ -240,6 +242,10 @@ class LadderAE():
                      wi(1., 'b1') * sigval)
 
         elif type_ == 'simple':
+            # if num != 6:
+            #     z_lat = z_lat * 0.0
+            #     wu = wi(1., 'a3') * u
+            # else:
             wu = wi(0., 'a3') * u
             wz = wi(1., 'a2') * z_lat
             wzu = wi(0., 'a4') * z_lat * u
