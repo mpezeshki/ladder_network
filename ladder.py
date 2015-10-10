@@ -20,10 +20,11 @@ class LadderAE():
         self.input_dim = 784
         # self.denoising_cost_x = (500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         # self.denoising_cost_x = (4000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        self.denoising_cost_x = (1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1)
+        # self.denoising_cost_x = (1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1)
+        self.denoising_cost_x = (200, 2, 0.02, 0.02, 0.02, 0.02, 0.02)
         self.noise_std = (0.3,) * 7
         # self.noise_std = (0.55, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        self.default_lr = 0.002
+        self.default_lr = 0.0005
         self.shareds = OrderedDict()
         self.rstream = RandomStreams(seed=1)
         self.rng = np.random.RandomState(seed=1)
@@ -155,10 +156,10 @@ class LadderAE():
                            top_g=top_g)
 
             # For semi-supervised version
-            if z_clean_s:
-                z_est_norm = (z_est - z_clean_m) / z_clean_s
-            else:
-                z_est_norm = z_est
+            # if z_clean_s:
+            #     z_est_norm = (z_est - z_clean_m) / z_clean_s
+            # else:
+            #     z_est_norm = z_est
             z_est_norm = z_est
 
             se = SquaredError('denois' + str(i))
@@ -246,22 +247,22 @@ class LadderAE():
         #     s = self.annotate_bn(s, layer_name + 'bn', 'var',
         #                          z.shape[0], dim)
 
-        z = (z - m) / T.sqrt(s + np.float32(1e-10))
+        # z = (z - m) / T.sqrt(s + np.float32(1e-10))
 
         z_lat = z + self.rstream.normal(size=z.shape).astype(
-            floatX) * noise_std
+            floatX) * (noise_std * s.mean())
         z = z_lat
 
         # Add bias
-        if act_f != 'linear':
-            z += self.shared(0.0 * np.ones(dim), layer_name + 'b',
-                             role=BIAS)
+        # if act_f != 'linear':
+        #     z += self.shared(0.0 * np.ones(dim), layer_name + 'b',
+        #                     role=BIAS)
 
         # Add Gamma parameter if necessary. (Not needed for all act_f)
-        if (act_f in ['sigmoid', 'tanh', 'softmax']):
-            c = self.shared(1.0 * np.ones(dim), layer_name + 'c',
-                            role=WEIGHT)
-            z *= c
+        # if (act_f in ['sigmoid', 'tanh', 'softmax']):
+        #     c = self.shared(1.0 * np.ones(dim), layer_name + 'c',
+        #                     role=WEIGHT)
+        #     z *= c
 
         h = apply_act(z, act_f)
 
@@ -280,8 +281,8 @@ class LadderAE():
             u = self.apply_layer(f_layer_type, z_ver,
                                  in_dim, out_dim, layer_name)
 
-        u -= u.mean(0, keepdims=True)
-        u /= T.sqrt(u.var(0, keepdims=True) + np.float32(1e-10))
+        # u -= u.mean(0, keepdims=True)
+        # u /= T.sqrt(u.var(0, keepdims=True) + np.float32(1e-10))
 
         z_lat = z_lat.flatten(2)
         bi = lambda inits, name: self.shared(inits * np.ones(out_dim),
