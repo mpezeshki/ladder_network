@@ -1,3 +1,4 @@
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -26,6 +27,8 @@ def parse_log(path, to_be_plotted):
                     results[key] = [value]
                 else:
                     results[key] = results[key] + [value]
+    for key in results.keys():
+        results[key] = [float(i) for i in results[key]]
     return results
 
 
@@ -35,7 +38,7 @@ def pimp(path=None, xaxis='Epochs', yaxis='Cross Entropy', title=None):
     plt.ylabel(r'\textbf{' + yaxis + '}')
     plt.grid()
     plt.title(r'\textbf{' + title + '}')
-    plt.ylim([0, 0.5])
+    plt.ylim([0, 1.5])
     if path is not None:
         plt.savefig(path)
     else:
@@ -54,7 +57,7 @@ def plot(x, y, xlabel='train', ylabel='dev', color='b',
 
 def best(path, what='test_Error_rate'):
     res = parse_log(path, [what])
-    return min(res[what])
+    return np.min([float(i) for i in res[what]])
 
 
 to_be_plotted = ['train_CE_clean', 'test_CE_clean']
@@ -64,13 +67,12 @@ yaxis = 'Cross Entropy'
 titles = ['train ladder standard', 'test ladder standard', 'train only last lateral', 'test only last lateral']
 main_title = 'Keeping the last lateral connection'
 
-file_1 = 'mnist_standard_2015_10_05_at_13_52/log.txt'
-file_2 = 'mnist_standard_2015_10_08_at_15_53/log.txt'
+file_1 = 'mnist_standard_2015_10_09_at_22_01/log.txt'
+file_2 = 'mnist_100_standard_2015_10_09_at_22_19/log.txt'
 
 
 path = '/u/pezeshki/ladder_network/results/'
 log1 = path + file_1
-print best(log1)
 results = parse_log(log1, to_be_plotted)
 plt.figure()
 plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
@@ -78,11 +80,16 @@ plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
 
 
 log2 = path + file_2
-print best(log2, 'test_Error_rate')
 results = parse_log(log2, to_be_plotted)
 plot(results[to_be_plotted[0]], results[to_be_plotted[1]],
      titles[2], titles[3], 'r')
 
+print 'test_Error_rate:'
+print best(log1, 'test_Error_rate')
+print best(log2, 'test_Error_rate')
+print 'test_CE_clean:'
+print best(log1, 'test_CE_clean')
+print best(log2, 'test_CE_clean')
 
 pimp(path=None, yaxis=yaxis, title=main_title)
 plt.savefig(path + 'plot.png')

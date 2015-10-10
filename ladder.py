@@ -6,10 +6,11 @@ import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 from blocks.bricks.cost import SquaredError
 from blocks.bricks.cost import CategoricalCrossEntropy, MisclassificationRate
-from blocks.roles import PARAMETER, WEIGHT, BIAS
+from blocks.roles import PARAMETER, WEIGHT, BIAS, add_role
+from blocks.graph import add_annotation, Annotation
 from utils import shared_param, AttributeDict, apply_act
 from blocks.bricks import Linear
-from utils import Glorot
+from utils import Glorot, BNPARAM
 logger = logging.getLogger('main.model')
 floatX = theano.config.floatX
 
@@ -33,6 +34,60 @@ class LadderAE():
                        (4, (('fc', 250), 'relu')),
                        (5, (('fc', 250), 'relu')),
                        (6, (('fc', 10), 'softmax'))]
+
+    def counter(self):
+        name = 'counter'
+        p = self.shareds.get(name)
+        update = []
+        if p is None:
+            p_max_val = np.float32(10)
+            p = self.shared(np.float32(1), name, role=BNPARAM)
+            p_max = self.shared(p_max_val, name + '_max', role=BNPARAM)
+            update = [(p, T.clip(p + np.float32(1),
+                                 np.float32(0),
+                                 p_max)),
+                      (p_max, p_max_val)]
+        return (p, update)
+
+    def annotate_bn(self, var, id, var_type, mb_size, size):
+        var_shape = np.array((1, size))
+        out_dim = np.prod(var_shape) / np.prod(var_shape[0])
+        # Flatten the var - shared variable updating is not trivial otherwise,
+        # as theano seems to believe a row vector is a matrix and will complain
+        # about the updates
+        orig_shape = var.shape
+        var = var.flatten()
+        # Here we add the name and role, the variables will later be identified
+        # by these values
+        var.name = id + '_%s_clean' % var_type
+        add_role(var, BNPARAM)
+        shared_var = self.shared(np.zeros(out_dim),
+                                 name='shared_%s' % var.name, role=None)
+
+        # Update running average estimates. When the counter is reset to 1, it
+        # will clear its memory
+        cntr, c_up = self.counter()
+        one = np.float32(1)
+        run_avg = lambda new, old: one / cntr * new + (one - one / cntr) * old
+        if var_type == 'mean':
+            new_value = run_avg(var, shared_var)
+        elif var_type == 'var':
+            mb_size = T.cast(mb_size, 'float32')
+            new_value = run_avg(mb_size / (mb_size - one) * var, shared_var)
+        else:
+            raise NotImplemented('Unknown batch norm var %s' % var_type)
+
+        def annotate_update(update, tag_to):
+            a = Annotation()
+            for (var, up) in update:
+                a.updates[var] = up
+            add_annotation(tag_to, a)
+
+        # Add the counter update to the annotated update if it is the first
+        # instance of a counter
+        annotate_update([(shared_var, new_value)] + c_up, var)
+
+        return var.reshape(orig_shape)
 
     def shared(self, init, name, cast_float32=True, role=PARAMETER, **kwargs):
         p = self.shareds.get(name)
@@ -68,20 +123,21 @@ class LadderAE():
 
         return d
 
-    def decoder(self, clean, corr):
+    def decoder(self, clean, corr, batch_size):
+        get_unlabeled = lambda x: x[batch_size:] if x is not None else x
         est = self.new_activation_dict()
         costs = AttributeDict()
         costs.denois = AttributeDict()
         for i, ((_, spec), act_f) in self.layers[::-1]:
-            z_corr = corr.z[i]
-            z_clean = clean.z[i]
-            # z_clean_s = clean.s.get(i)
-            # z_clean_m = clean.m.get(i)
+            z_corr = get_unlabeled(corr.z[i])
+            z_clean = get_unlabeled(clean.z[i])
+            z_clean_s = get_unlabeled(clean.s.get(i))
+            z_clean_m = get_unlabeled(clean.m.get(i))
 
             # It's the last layer
             if i == len(self.layers) - 1:
                 fspec = (None, None)
-                ver = corr.h[i]
+                ver = get_unlabeled(corr.h[i])
                 ver_dim = self.layer_dims[i]
                 top_g = True
             else:
@@ -99,10 +155,10 @@ class LadderAE():
                            top_g=top_g)
 
             # For semi-supervised version
-            # if z_clean_s:
-            #     z_est_norm = (z_est - z_clean_m) / z_clean_s
-            # else:
-            #     z_est_norm = z_est
+            if z_clean_s:
+                z_est_norm = (z_est - z_clean_m) / z_clean_s
+            else:
+                z_est_norm = z_est
             z_est_norm = z_est
 
             se = SquaredError('denois' + str(i))
@@ -118,7 +174,10 @@ class LadderAE():
             est.m[i] = None
         return est, costs
 
-    def apply(self, input, target):
+    def apply(self, input_lb, input_un, target):
+        batch_size = input_lb.shape[0]
+        get_labeled = lambda x: x[:batch_size] if x is not None else x
+        input = T.concatenate([input_lb, input_un], axis=0)
         self.layer_dims = {0: self.input_dim}
         self.lr = self.shared(self.default_lr, 'learning_rate', role=None)
         top = len(self.layers) - 1
@@ -126,20 +185,17 @@ class LadderAE():
         clean = self.encoder(input, noise_std=[0])
         corr = self.encoder(input, noise_std=self.noise_std)
 
-        ests, costs = self.decoder(clean, corr)
+        ests, costs = self.decoder(clean, corr, batch_size)
 
         # Costs
         y = target.flatten()
 
-        self.output = clean.h[top]
-        self.clean_zs = clean.z.values()
-        self.corr_zs = corr.z.values()
         costs.class_clean = CategoricalCrossEntropy().apply(
-            y, clean.h[top])
+            y, get_labeled(clean.h[top]))
         costs.class_clean.name = 'CE_clean'
 
         costs.class_corr = CategoricalCrossEntropy().apply(
-            y, corr.h[top])
+            y, get_labeled(corr.h[top]))
         costs.class_corr.name = 'CE_corr'
 
         costs.total = costs.class_corr * 1.0
@@ -151,7 +207,7 @@ class LadderAE():
 
         # Classification error
         mr = MisclassificationRate()
-        self.error = mr.apply(y, clean.h[top]) * np.float32(100.)
+        self.error = mr.apply(y, get_labeled(clean.h[top])) * np.float32(100.)
         self.error.name = 'Error_rate'
 
     def rand_init(self, in_dim, out_dim):
@@ -183,6 +239,12 @@ class LadderAE():
         m = s = None
         m = z.mean(0, keepdims=True)
         s = z.var(0, keepdims=True)
+
+        # if noise_std == 0:
+        #     m = self.annotate_bn(m, layer_name + 'bn', 'mean',
+        #                          z.shape[0], dim)
+        #     s = self.annotate_bn(s, layer_name + 'bn', 'var',
+        #                          z.shape[0], dim)
 
         z = (z - m) / T.sqrt(s + np.float32(1e-10))
 

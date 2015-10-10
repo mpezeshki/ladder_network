@@ -13,16 +13,17 @@ from blocks.main_loop import MainLoop
 from blocks.model import Model
 from utils import SaveLog, SaveParams, LRDecay
 from ladder import LadderAE
-from datasets import get_streams
+from datasets import get_mixed_streams
 logger = logging.getLogger('main')
 
 
 def setup_model():
     ladder = LadderAE()
     input_type = TensorType('float32', [False, False])
-    x = input_type('features')
-    y = theano.tensor.lvector('targets')
-    ladder.apply(x, y)
+    x_lb = input_type('features_labeled')
+    x_un = input_type('features_unlabeled')
+    y = theano.tensor.lvector('targets_labeled')
+    ladder.apply(x_lb, x_un, y)
 
     return ladder
 
@@ -31,7 +32,7 @@ def train(ladder, batch_size=100, num_train_examples=60000,
           num_epochs=150, lrate_decay=0.67):
     # Setting Logger
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/mnist_standard_' + timestr
+    save_path = 'results/mnist_100_standard_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
@@ -58,8 +59,8 @@ def train(ladder, batch_size=100, num_train_examples=60000,
         ladder.error, training_algorithm.total_gradient_norm,
         ladder.costs.total] + ladder.costs.denois.values()
 
-    train_data_stream, valid_data_stream, test_data_stream = get_streams(
-        num_train_examples, batch_size)
+    train_data_stream, test_data_stream = get_mixed_streams(
+        batch_size)
 
     train_monitoring = TrainingDataMonitoring(
         variables=monitored_variables,
@@ -104,11 +105,10 @@ def evaluate(ladder, load_path):
             assert param.get_value().shape == loaded[param_name].shape
             param.set_value(loaded[param_name])
 
-    train_data_stream, valid_data_stream, test_data_stream = get_streams(
-        50000, 10000)
+    test_data_stream, test_data_stream = get_mixed_streams(10000)
     test_data = test_data_stream.get_epoch_iterator().next()
-    test_data_input = test_data[0]
-    test_data_target = test_data[1]
+    test_data_input = test_data[10]
+    test_data_target = test_data[0]
     print 'Compiling ...'
     cg = ComputationGraph([ladder.costs.total])
     eval_ = theano.function(cg.inputs, ladder.error)
@@ -123,8 +123,8 @@ def evaluate(ladder, load_path):
 
 
 if __name__ == "__main__":
-    load_path = '/u/pezeshki/ladder_network/results/mnist_standard_2015_10_08_at_15_53'
-    # load_path = None
+    # load_path = '/u/pezeshki/ladder_network/results/mnist_standard_2015_10_08_at_15_53'
+    load_path = None
     logging.basicConfig(level=logging.INFO)
     ladder = setup_model()
     if load_path is None:

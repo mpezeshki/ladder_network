@@ -49,3 +49,37 @@ def get_streams(num_train_examples, batch_size, use_test=True):
             iteration_scheme=ShuffledScheme(ind, batch_size)))
 
     return tarin_stream, valid_stream, test_stream
+
+
+def get_mixed_streams(batch_size):
+    from fuel.datasets import IterableDataset
+    from fuel.transformers import Flatten
+    data = numpy.load('data_train_100.npz')
+    n = data['features_labeled'].shape[0]
+    features_labeled = data['features_labeled'].reshape(
+        (n / batch_size, batch_size, -1))
+    targets_labeled = data['targets_labeled'].reshape(
+        (n / batch_size, batch_size, -1))
+    features_unlabeled = data['features_unlabeled'].reshape(
+        (n / batch_size, batch_size, -1))
+
+    dataset = IterableDataset({'features_labeled': features_labeled,
+                               'targets_labeled': targets_labeled,
+                               'features_unlabeled': features_unlabeled})
+    tarin_stream = Flatten(DataStream(dataset), which_sources=('targets_labeled',))
+
+    data = numpy.load('data_test.npz')
+    n = data['features_labeled'].shape[0]
+    features_labeled = data['features_labeled'].reshape(
+        (n / batch_size, batch_size, -1))
+    targets_labeled = data['targets_labeled'].reshape(
+        (n / batch_size, batch_size, -1))
+    features_unlabeled = data['features_unlabeled'].reshape(
+        (n / batch_size, batch_size, -1))
+
+    dataset = IterableDataset({'features_labeled': features_labeled,
+                               'targets_labeled': targets_labeled,
+                               'features_unlabeled': features_unlabeled})
+    test_stream = Flatten(DataStream(dataset), which_sources=('targets_labeled',))
+
+    return tarin_stream, test_stream
