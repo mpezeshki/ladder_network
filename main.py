@@ -32,7 +32,7 @@ def train(ladder, batch_size=100, num_train_examples=60000,
           num_epochs=150, lrate_decay=0.67):
     # Setting Logger
     timestr = time.strftime("%Y_%m_%d_at_%H_%M")
-    save_path = 'results/mnist_100_no_wierd_norm_' + timestr
+    save_path = 'results/mnist_100_no_bn_' + timestr
     log_path = os.path.join(save_path, 'log.txt')
     os.makedirs(save_path)
     fh = logging.FileHandler(filename=log_path)
